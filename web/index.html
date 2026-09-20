@@ -60,6 +60,12 @@
     pre { margin:0; max-height:350px; overflow:auto; padding:15px; border-left:4px solid #798796; background:var(--code); color:var(--code-ink); font:12px/1.55 "DM Mono",monospace; white-space:pre-wrap; word-break:break-word; }
     .response pre { border-color:var(--orange); }.response { display:none; }.response.visible { display:block; }
     .empty-trace { padding:18px 0; color:var(--muted); font-size:13px; line-height:1.6; }
+    .api-history { display:grid; gap:9px; }
+    .api-item { border:1px solid var(--line); background:color-mix(in srgb, var(--paper) 90%, white); }
+    .api-item summary { cursor:pointer; list-style:none; padding:11px 12px; display:flex; justify-content:space-between; gap:12px; font:700 11px/1.3 "DM Mono",monospace; letter-spacing:.03em; }
+    .api-item summary::-webkit-details-marker { display:none; }.api-item summary::before { content:"+"; color:var(--blue); margin-right:7px; }.api-item[open] summary::before { content:"−"; }
+    .api-item summary span:first-child { flex:1; }.api-item summary em { color:var(--muted); font-style:normal; font-weight:500; }.api-item[open] summary { border-bottom:1px solid var(--line); }
+    .api-body { padding:12px; }.api-actions { display:flex; gap:7px; margin:0 0 8px; }.copy-button { border:1px solid var(--ink); background:transparent; padding:5px 7px; color:var(--ink); font:700 9px/1 "DM Mono",monospace; letter-spacing:.04em; text-transform:uppercase; }.copy-button:hover { background:var(--ink); color:var(--paper); }.api-body h3 { margin:11px 0 6px; font:700 10px "DM Mono",monospace; letter-spacing:.06em; text-transform:uppercase; color:var(--blue); }.api-body h3.response-title { color:var(--orange); }
 
     @media (max-width:960px) { .workspace { grid-template-columns:1fr; gap:38px; }.board-side { max-width:530px; }.trace { max-width:760px; } }
     @media (max-width:560px) { .topbar-inner { align-items:flex-start; flex-direction:column; }.actions { width:100%; justify-content:flex-start; }.mini-button,.improve-control { padding:8px; }.brand { gap:9px; } }
@@ -87,10 +93,9 @@
     </div>
 
     <div class="trace">
-      <div class="trace-head"><span>Request / response</span><span id="api-state">chờ nước đi</span></div>
-      <div id="trace-empty" class="empty-trace">Mỗi lượt Jev sẽ hiện request state + choice và response thật tại đây.</div>
-      <article class="call" id="request-panel" hidden><div class="call-meta"><strong>Request</strong><span class="pill">systemone</span></div><pre id="request-json"></pre></article>
-      <article class="call response" id="response-panel"><div class="call-meta"><strong>Response</strong><span class="pill">next_move</span></div><pre id="response-json"></pre></article>
+      <div class="trace-head"><span>Lịch sử request</span><span id="api-state">chờ nước đi</span></div>
+      <div id="trace-empty" class="empty-trace">Mỗi request Jev sẽ được lưu ở đây. Bấm vào một dòng để xem JSON request/response và copy.</div>
+      <div id="api-history" class="api-history"></div>
     </div>
   </section></main>
 
@@ -98,9 +103,25 @@
     const API_URL = '/api/systemone';
     const CELLS = ['A1','A2','A3','B1','B2','B3','C1','C2','C3'];
     const LINES = [['A1','A2','A3'],['B1','B2','B3'],['C1','C2','C3'],['A1','B1','C1'],['A2','B2','C2'],['A3','B3','C1']];
-    let board, history, locked, complete, humanMark, jevMark;
+    let board, history, apiHistory, locked, complete, humanMark, jevMark;
     const $ = (id) => document.getElementById(id);
     const pretty = (value) => JSON.stringify(value, null, 2);
+    const escapeHtml = (text) => text.replace(/[&<>]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[char]));
+
+    function renderApiHistory() {
+      $('trace-empty').hidden = apiHistory.length > 0;
+      $('api-history').innerHTML = apiHistory.map((entry, index) => {
+        const response = entry.response ?? { status:'pending', message:'Đang chờ TypeSafe trả lời.' };
+        return `<details class="api-item" ${index === 0 ? 'open' : ''}><summary><span>#${apiHistory.length - index} · ${entry.label}</span><em>${entry.request.model}</em></summary><div class="api-body"><div class="api-actions"><button class="copy-button" data-copy="request" data-index="${index}">Copy request</button><button class="copy-button" data-copy="response" data-index="${index}">Copy response</button></div><h3>Request</h3><pre>${escapeHtml(pretty(entry.request))}</pre><h3 class="response-title">Response · ${entry.status}</h3><pre>${escapeHtml(pretty(response))}</pre></div></details>`;
+      }).join('');
+    }
+
+    async function copyApiPart(index, part, button) {
+      const text = pretty(apiHistory[index][part] ?? { status:'pending' });
+      try { await navigator.clipboard.writeText(text); }
+      catch { const area = document.createElement('textarea'); area.value = text; document.body.append(area); area.select(); document.execCommand('copy'); area.remove(); }
+      const original = button.textContent; button.textContent = 'Copied ✓'; setTimeout(() => { button.textContent = original; }, 1200);
+    }
 
     function setMessage(message, kind = 'ready') {
       const labels = { ready:'Sẵn sàng', thinking:'Jev đang suy nghĩ', move:'Nước đi của Jev', win:'Kết quả — bạn thắng', loss:'Kết quả — Jev thắng', draw:'Kết quả — hòa', error:'Lỗi kết nối' };
@@ -113,8 +134,8 @@
       humanMark = jevStarts ? 'O' : 'X';
       jevMark = jevStarts ? 'X' : 'O';
       board = Object.fromEntries(CELLS.map(cell => [cell, '']));
-      history = []; locked = jevStarts; complete = false;
-      $('request-panel').hidden = true; $('response-panel').classList.remove('visible'); $('trace-empty').hidden = false;
+      history = []; apiHistory = []; locked = jevStarts; complete = false;
+      renderApiHistory();
       $('api-state').textContent = 'chờ nước đi';
       setMessage(jevStarts ? 'Jev là X và sẽ đi nước đầu tiên.' : 'Bạn là X. Chọn một ô trống để đánh.');
       render();
@@ -179,12 +200,14 @@
     async function playJevTurn() {
       if (complete || !available().length) return;
       locked = true; render(); setMessage('Đang gửi state đến Jev…', 'thinking'); $('api-state').textContent = 'đang gọi API';
-      const requestBody = buildRequest(); $('request-json').textContent = pretty(requestBody); $('request-panel').hidden = false; $('trace-empty').hidden = true; $('response-panel').classList.remove('visible');
+      const requestBody = buildRequest();
+      const record = { label:`Nước ${history.length + 1} · Jev chọn ô`, request:requestBody, response:null, status:'đang gửi' };
+      apiHistory.unshift(record); renderApiHistory();
       try {
         const response = await fetch(API_URL, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(requestBody) });
         const rawBody = await response.text(); let payload;
-        try { payload = rawBody ? JSON.parse(rawBody) : null; } catch { $('response-json').textContent = rawBody || '(empty response body)'; $('response-panel').classList.add('visible'); throw new Error(`API returned non-JSON data (HTTP ${response.status}).`); }
-        $('response-json').textContent = pretty(payload ?? { error:{ message:'Empty response body' } }); $('response-panel').classList.add('visible');
+        try { payload = rawBody ? JSON.parse(rawBody) : null; } catch { record.response = { error:{ message:rawBody || 'Empty response body' } }; record.status = `HTTP ${response.status} · non-JSON`; renderApiHistory(); throw new Error(`API returned non-JSON data (HTTP ${response.status}).`); }
+        record.response = payload ?? { error:{ message:'Empty response body' } }; record.status = `HTTP ${response.status}`; renderApiHistory();
         if (!response.ok) throw new Error(payload?.error?.message || `Local endpoint ${location.origin}${API_URL} returned empty HTTP ${response.status}. Open via localhost:8000, not Live Server.`);
         const move = payload?.answers?.next_move?.choice;
         if (!available().includes(move)) throw new Error(`Jev trả về ô không hợp lệ: ${String(move)}`);
@@ -195,6 +218,7 @@
         if (!available().length) { finish('Không còn ô trống — ván cờ hòa.', 'draw'); return; }
         setMessage(`Jev chọn ${move}${confidenceText}. Đến lượt bạn.`, 'move');
       } catch (error) {
+        if (record.status === 'đang gửi') { record.response = { error:{ message:error.message } }; record.status = 'network error'; renderApiHistory(); }
         $('api-state').textContent = 'lỗi API'; complete = true; setMessage(`Không thể nhận nước đi từ Jev: ${error.message}`, 'error');
       } finally { locked = false; render(); }
     }
@@ -207,6 +231,7 @@
       render(); await playJevTurn();
     }
 
+    $('api-history').addEventListener('click', (event) => { const button = event.target.closest('[data-copy]'); if (button) copyApiPart(Number(button.dataset.index), button.dataset.copy, button); });
     $('new-game').addEventListener('click', () => reset(false));
     $('jev-first').addEventListener('click', () => reset(true));
     $('improve-prompt').addEventListener('change', (event) => { if (!locked && !complete) setMessage(event.target.checked ? 'Improve Prompt bật — lượt Jev tiếp theo sẽ nhận facts chiến thuật.' : 'Improve Prompt tắt — Jev chỉ nhận danh sách ô trống.'); });
