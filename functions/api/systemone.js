@@ -1,6 +1,8 @@
 const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
-const MAX_REQUEST_BYTES = 30_000;
-const CELLS = new Set(["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"]);
+const MAX_REQUEST_BYTES = 50_000;
+const TTT_CELLS = new Set(["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"]);
+const GOMOKU_CELL = /^[A-P](1[0-6]|[1-9])$/;
+const GOMOKU_REGION = /^r[1-4]c[1-4]$/;
 
 function json(value, status = 200, headers = {}) {
   return new Response(JSON.stringify(value), {
@@ -19,49 +21,68 @@ function isObject(value) {
 }
 
 /**
- * This is deliberately not a generic TypeSafe proxy. It only accepts the
- * tic-tac-toe shape used by the UI, so the public endpoint cannot be used to
- * submit arbitrary TypeSafe workloads through the owner's API key.
+ * This is deliberately not a generic TypeSafe proxy. It accepts only the
+ * request shapes produced by the 3×3 and 16×16 game UIs.
  */
-function validateTicTacToeRequest(body) {
-  if (!isObject(body) || body.model !== "jev-latest") {
-    return "Only model jev-latest is allowed.";
-  }
-
+function validateBase(body) {
+  if (!isObject(body) || body.model !== "jev-latest") return "Only model jev-latest is allowed.";
   const state = body.state;
-  const question = body.questions?.next_move;
-  if (!isObject(state) || !isObject(question)) {
-    return "A tic-tac-toe state and next_move question are required.";
-  }
-  if (question.type !== "choice" || !isObject(question.criteria)) {
-    return "next_move must be a choice with criteria.";
-  }
-
-  const rows = state.board?.rows;
-  if (!Array.isArray(rows) || rows.length !== 3 || !rows.every((row) =>
-    Array.isArray(row) && row.length === 3 && row.every((cell) => ["", "X", "O"].includes(cell))
-  )) {
-    return "board.rows must be a 3 by 3 board containing only X, O, or empty strings.";
-  }
-  if (!["X", "O"].includes(state.current_player) || !["X", "O"].includes(state.opponent) || state.current_player === state.opponent) {
+  if (!isObject(state) || !["X", "O"].includes(state.current_player) || !["X", "O"].includes(state.opponent) || state.current_player === state.opponent) {
     return "current_player and opponent must be different X/O marks.";
   }
-
-  const criteriaCells = Object.keys(question.criteria);
-  if (criteriaCells.length < 1 || criteriaCells.length > 9 || !criteriaCells.every((cell) => CELLS.has(cell))) {
-    return "criteria must contain one to nine valid board cells.";
-  }
-
-  const boardByCell = Object.fromEntries(
-    ["A", "B", "C"].flatMap((row, rowIndex) => [1, 2, 3].map((column, columnIndex) => [
-      `${row}${column}`,
-      rows[rowIndex][columnIndex],
-    ])),
-  );
-  if (!criteriaCells.every((cell) => boardByCell[cell] === "")) {
-    return "criteria may contain only empty board cells.";
-  }
   return null;
+}
+
+function validateChoice(question) {
+  return isObject(question) && question.type === "choice" && isObject(question.criteria);
+}
+
+function validateTicTacToeRequest(body) {
+  const baseError = validateBase(body);
+  if (baseError) return baseError;
+  const rows = body.state.board?.rows;
+  const question = body.questions?.next_move;
+  if (!Array.isArray(rows) || rows.length !== 3 || !rows.every((row) => Array.isArray(row) && row.length === 3 && row.every((cell) => ["", "X", "O"].includes(cell)))) {
+    return "Tic-tac-toe board.rows must be a 3 by 3 board containing only X, O, or empty strings.";
+  }
+  if (!validateChoice(question)) return "next_move must be a choice with criteria.";
+  const cells = Object.keys(question.criteria);
+  if (cells.length < 1 || cells.length > 9 || !cells.every((cell) => TTT_CELLS.has(cell))) return "criteria must contain one to nine valid board cells.";
+  const boardByCell = Object.fromEntries(["A", "B", "C"].flatMap((row, rowIndex) => [1, 2, 3].map((column, columnIndex) => [`${row}${column}`, rows[rowIndex][columnIndex]])));
+  return cells.every((cell) => boardByCell[cell] === "") ? null : "criteria may contain only empty board cells.";
+}
+
+function validateGomokuRequest(body) {
+  const baseError = validateBase(body);
+  if (baseError) return baseError;
+  const rows = body.state.board?.rows;
+  if (!Array.isArray(rows) || rows.length !== 16 || !rows.every((row) => Array.isArray(row) && row.length === 16 && row.every((cell) => ["", "X", "O"].includes(cell)))) {
+    return "Gomoku board.rows must be a 16 by 16 board containing only X, O, or empty strings.";
+  }
+
+  const questions = body.questions;
+  if (!isObject(questions)) return "A Gomoku choice question is required.";
+  if (isObject(questions.next_region)) {
+    const question = questions.next_region;
+    const regions = Object.keys(question.criteria || {});
+    if (!validateChoice(question) || regions.length < 1 || regions.length > 16 || !regions.every((region) => GOMOKU_REGION.test(region))) return "next_region must contain valid non-empty 4 by 4 regions.";
+    return null;
+  }
+  if (isObject(questions.next_move)) {
+    const question = questions.next_move;
+    const cells = Object.keys(question.criteria || {});
+    if (!validateChoice(question) || cells.length < 1 || cells.length > 16 || !cells.every((cell) => GOMOKU_CELL.test(cell))) return "next_move must contain one to sixteen valid Gomoku cells.";
+    const boardByCell = Object.fromEntries(rows.flatMap((row, rowIndex) => row.map((value, columnIndex) => [`${String.fromCharCode(65 + rowIndex)}${columnIndex + 1}`, value])));
+    return cells.every((cell) => boardByCell[cell] === "") ? null : "Gomoku criteria may contain only empty board cells.";
+  }
+  return "Gomoku requires next_region or next_move.";
+}
+
+function validateGameRequest(body) {
+  const size = body?.state?.board?.rows?.length;
+  if (size === 3) return validateTicTacToeRequest(body);
+  if (size === 16) return validateGomokuRequest(body);
+  return "Only the 3 by 3 and 16 by 16 game request formats are allowed.";
 }
 
 export async function onRequest(context) {
@@ -94,7 +115,7 @@ export async function onRequest(context) {
     return json({ error: { message: "Request body must be valid JSON." } }, 400);
   }
 
-  const validationError = validateTicTacToeRequest(body);
+  const validationError = validateGameRequest(body);
   if (validationError) {
     return json({ error: { message: validationError } }, 400);
   }

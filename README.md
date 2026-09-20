@@ -2,9 +2,21 @@
 
 Bản demo web cho thấy Jev nhận **state** của bàn cờ và trả một `choice` là ô đi tiếp theo.
 
-- `web/index.html` — UI tĩnh.
+- `web/index.html` — game cờ 3×3.
+- `web/gomoku.html` — game caro 16×16.
 - `functions/api/systemone.js` — Cloudflare Pages Function tại route `POST /api/systemone`.
 - `TYPESAFE_API_KEY` chỉ tồn tại trong Cloudflare secret; không đi vào browser JavaScript.
+
+## Caro 16×16
+
+Trang `/gomoku` (hoặc `/gomoku.html`) dùng luật: **5 quân liên tiếp trở lên** theo ngang/dọc/chéo thắng, trừ khi hai đầu của chuỗi quân tối đa đều bị quân đối thủ chặn. Mép bàn cờ không được tính là một quân chặn.
+
+Ở bàn 16×16 có 256 ô, vượt giới hạn 255 lựa chọn của một Jev `choice`. Vì vậy một lượt Jev gọi API hai lần:
+
+1. Chọn một khu vực 4×4 trong tối đa 16 khu vực còn ô trống.
+2. Chọn một ô trong tối đa 16 ô của khu vực đó.
+
+Toàn bộ 256 ô vẫn là nước đi hợp lệ trong game; hai bước chỉ là cách biểu diễn lựa chọn cho Jev.
 
 ## Chạy local bằng Cloudflare runtime
 
