@@ -49,8 +49,9 @@
     .game-message[data-kind="draw"] { border-color:#7b5d14; background:#f5e8bc; }.game-message[data-kind="draw"] .message-kicker { color:#735507; }
 
     .trace { min-width:0; }
-    .trace-head { border-top:2px solid var(--ink); padding:10px 0 15px; display:flex; justify-content:space-between; font:700 10px/1.3 "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; }
-    #api-state { color:var(--muted); }
+    .trace-head { border-top:2px solid var(--ink); padding:10px 0 15px; display:flex; justify-content:space-between; align-items:center; gap:10px; font:700 10px/1.3 "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; }
+    .history-controls { display:flex; align-items:center; gap:7px; } #api-state { color:var(--muted); }
+    .copy-all { border:1px solid var(--ink); background:transparent; padding:5px 7px; color:var(--ink); font:700 9px/1 "DM Mono",monospace; letter-spacing:.04em; text-transform:uppercase; }.copy-all:hover:not(:disabled){background:var(--ink);color:var(--paper)}.copy-all:disabled{opacity:.38;cursor:not-allowed;}
     .call { margin-bottom:19px; padding-bottom:19px; border-bottom:1px solid var(--line); }
     .call[hidden] { display:none; }
     .call-meta { display:flex; align-items:baseline; justify-content:space-between; gap:15px; margin-bottom:8px; }
@@ -93,7 +94,7 @@
     </div>
 
     <div class="trace">
-      <div class="trace-head"><span>Lịch sử request</span><span id="api-state">chờ nước đi</span></div>
+      <div class="trace-head"><span>Lịch sử request</span><span class="history-controls"><span id="api-state">chờ nước đi</span><button id="copy-all" class="copy-all" type="button" disabled>Copy all</button></span></div>
       <div id="trace-empty" class="empty-trace">Mỗi request Jev sẽ được lưu ở đây. Bấm vào một dòng để xem JSON request/response và copy.</div>
       <div id="api-history" class="api-history"></div>
     </div>
@@ -110,17 +111,23 @@
 
     function renderApiHistory() {
       $('trace-empty').hidden = apiHistory.length > 0;
+      $('copy-all').disabled = apiHistory.length === 0;
       $('api-history').innerHTML = apiHistory.map((entry, index) => {
         const response = entry.response ?? { status:'pending', message:'Đang chờ TypeSafe trả lời.' };
         return `<details class="api-item" ${index === 0 ? 'open' : ''}><summary><span>#${apiHistory.length - index} · ${entry.label}</span><em>${entry.request.model}</em></summary><div class="api-body"><div class="api-actions"><button class="copy-button" data-copy="request" data-index="${index}">Copy request</button><button class="copy-button" data-copy="response" data-index="${index}">Copy response</button></div><h3>Request</h3><pre>${escapeHtml(pretty(entry.request))}</pre><h3 class="response-title">Response · ${entry.status}</h3><pre>${escapeHtml(pretty(response))}</pre></div></details>`;
       }).join('');
     }
 
-    async function copyApiPart(index, part, button) {
-      const text = pretty(apiHistory[index][part] ?? { status:'pending' });
+    async function copyText(text, button, copiedLabel) {
       try { await navigator.clipboard.writeText(text); }
       catch { const area = document.createElement('textarea'); area.value = text; document.body.append(area); area.select(); document.execCommand('copy'); area.remove(); }
-      const original = button.textContent; button.textContent = 'Copied ✓'; setTimeout(() => { button.textContent = original; }, 1200);
+      const original = button.textContent; button.textContent = copiedLabel; setTimeout(() => { button.textContent = original; }, 1200);
+    }
+
+    async function copyApiPart(index, part, button) { await copyText(pretty(apiHistory[index][part] ?? { status:'pending' }), button, 'Copied ✓'); }
+    async function copyAllHistory(button) {
+      const ordered = [...apiHistory].reverse().map((entry, index) => ({ sequence:index + 1, label:entry.label, request:entry.request, response:entry.response ?? { status:'pending' }, status:entry.status }));
+      await copyText(pretty(ordered), button, 'Copied all ✓');
     }
 
     function setMessage(message, kind = 'ready') {
@@ -232,6 +239,7 @@
     }
 
     $('api-history').addEventListener('click', (event) => { const button = event.target.closest('[data-copy]'); if (button) copyApiPart(Number(button.dataset.index), button.dataset.copy, button); });
+    $('copy-all').addEventListener('click', (event) => copyAllHistory(event.currentTarget));
     $('new-game').addEventListener('click', () => reset(false));
     $('jev-first').addEventListener('click', () => reset(true));
     $('improve-prompt').addEventListener('change', (event) => { if (!locked && !complete) setMessage(event.target.checked ? 'Improve Prompt bật — lượt Jev tiếp theo sẽ nhận facts chiến thuật.' : 'Improve Prompt tắt — Jev chỉ nhận danh sách ô trống.'); });
