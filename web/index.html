@@ -107,6 +107,7 @@
     let board, history, apiHistory, locked, complete, humanMark, jevMark;
     const $ = (id) => document.getElementById(id);
     const pretty = (value) => JSON.stringify(value, null, 2);
+    const snapshot = (value) => JSON.parse(JSON.stringify(value));
     const escapeHtml = (text) => text.replace(/[&<>]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[char]));
 
     function renderApiHistory() {
@@ -208,13 +209,14 @@
       if (complete || !available().length) return;
       locked = true; render(); setMessage('Đang gửi state đến Jev…', 'thinking'); $('api-state').textContent = 'đang gọi API';
       const requestBody = buildRequest();
-      const record = { label:`Nước ${history.length + 1} · Jev chọn ô`, request:requestBody, response:null, status:'đang gửi' };
+      // History must keep an immutable request snapshot; board is mutated on later moves.
+      const record = { label:`Nước ${history.length + 1} · Jev chọn ô`, request:snapshot(requestBody), response:null, status:'đang gửi' };
       apiHistory.unshift(record); renderApiHistory();
       try {
         const response = await fetch(API_URL, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(requestBody) });
         const rawBody = await response.text(); let payload;
         try { payload = rawBody ? JSON.parse(rawBody) : null; } catch { record.response = { error:{ message:rawBody || 'Empty response body' } }; record.status = `HTTP ${response.status} · non-JSON`; renderApiHistory(); throw new Error(`API returned non-JSON data (HTTP ${response.status}).`); }
-        record.response = payload ?? { error:{ message:'Empty response body' } }; record.status = `HTTP ${response.status}`; renderApiHistory();
+        record.response = snapshot(payload ?? { error:{ message:'Empty response body' } }); record.status = `HTTP ${response.status}`; renderApiHistory();
         if (!response.ok) throw new Error(payload?.error?.message || `Local endpoint ${location.origin}${API_URL} returned empty HTTP ${response.status}. Open via localhost:8000, not Live Server.`);
         const move = payload?.answers?.next_move?.choice;
         if (!available().includes(move)) throw new Error(`Jev trả về ô không hợp lệ: ${String(move)}`);
