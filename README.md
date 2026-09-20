@@ -11,12 +11,9 @@ Bản demo web cho thấy Jev nhận **state** của bàn cờ và trả một `
 
 Trang `/gomoku` (hoặc `/gomoku.html`) dùng luật: **5 quân liên tiếp trở lên** theo ngang/dọc/chéo thắng, trừ khi hai đầu của chuỗi quân tối đa đều bị quân đối thủ chặn. Mép bàn cờ không được tính là một quân chặn.
 
-Ở bàn 16×16 có 256 ô, vượt giới hạn 255 lựa chọn của một Jev `choice`. Vì vậy một lượt Jev gọi API hai lần:
+Mỗi lượt thông thường, UI gửi **toàn bộ ô trống hợp lệ** cho Jev trong một `next_move` choice. State chỉ gửi danh sách quân đang có (`board.stones`); mỗi criteria chỉ là nhãn tọa độ như `"H8": "Legal empty cell H8."`. Browser không tính hay gửi điểm số chiến thuật theo từng ô. Prompt yêu cầu Jev tự đọc toàn bộ thế cờ, ưu tiên thắng ngay, chặn thắng ngay, các thế bốn/ba mở, rồi phát triển thế cờ.
 
-1. Chọn một khu vực 4×4 trong tối đa 16 khu vực còn ô trống.
-2. Chọn một ô trong tối đa 16 ô của khu vực đó.
-
-Toàn bộ 256 ô vẫn là nước đi hợp lệ trong game; hai bước chỉ là cách biểu diễn lựa chọn cho Jev.
+Jev `choice` giới hạn 255 options. Khi người chơi đánh trước, lượt Jev đầu tiên có đúng 255 ô trống nên vẫn gửi đủ toàn bộ. Chỉ chế độ **Jev đi trước** bắt đầu với 256 ô trống; lượt khai cuộc đó UI gửi bốn ô trung tâm `H8`, `H9`, `I8`, `I9` vì không thể đưa 256 lựa chọn vào một choice duy nhất. Từ lượt kế tiếp trở đi, mọi ô trống hợp lệ đều được gửi.
 
 ## Chạy local bằng Cloudflare runtime
 

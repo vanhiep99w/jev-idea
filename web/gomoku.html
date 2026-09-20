@@ -25,7 +25,6 @@ const API_URL = '/api/systemone';
 const SIZE = 16;
 const ROWS = 'ABCDEFGHIJKLMNOP'.split('');
 const DIRECTIONS = [[0, 1], [1, 0], [1, 1], [1, -1]];
-const MAX_CANDIDATES = 64;
 let board, history, apiHistory, humanMark, jevMark, locked, complete;
 
 const $ = (id) => document.getElementById(id);
@@ -84,59 +83,35 @@ function winsAt(r, c, mark, testBoard = board) {
   }
   return false;
 }
-function cloneWith(r, c, mark) { const next = board.map((row) => [...row]); next[r][c] = mark; return next; }
-function immediateWins(mark) { return empties().filter(([r, c]) => winsAt(r, c, mark, cloneWith(r, c, mark))); }
-function lineProfile(r, c, dr, dc, mark, testBoard) {
-  let startR = r, startC = c, endR = r, endC = c;
-  while (inBoard(startR - dr, startC - dc) && testBoard[startR - dr][startC - dc] === mark) { startR -= dr; startC -= dc; }
-  while (inBoard(endR + dr, endC + dc) && testBoard[endR + dr][endC + dc] === mark) { endR += dr; endC += dc; }
-  const length = Math.max(Math.abs(endR - startR), Math.abs(endC - startC)) + 1;
-  const before = inBoard(startR - dr, startC - dc) ? testBoard[startR - dr][startC - dc] : null;
-  const after = inBoard(endR + dr, endC + dc) ? testBoard[endR + dr][endC + dc] : null;
-  return { length, openEnds:Number(before === '') + Number(after === '') };
-}
-function neighborCounts(r, c) {
-  let own = 0, opponent = 0;
-  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) { if (!dr && !dc) continue; const mark = inBoard(r + dr, c + dc) ? board[r + dr][c + dc] : null; if (mark === jevMark) own++; if (mark === humanMark) opponent++; }
-  return { own, opponent };
-}
-function moveFacts(r, c, mark) {
-  const testBoard = cloneWith(r, c, mark), profiles = DIRECTIONS.map(([dr, dc]) => lineProfile(r, c, dr, dc, mark, testBoard));
-  const longestRun = Math.max(...profiles.map((item) => item.length)); const openEnds = Math.max(...profiles.filter((item) => item.length === longestRun).map((item) => item.openEnds));
-  return { winsNow:winsAt(r, c, mark, testBoard), longestRun, openEnds, openFour:profiles.some((item) => item.length >= 4 && item.openEnds === 2), openThree:profiles.some((item) => item.length === 3 && item.openEnds === 2), ...neighborCounts(r, c) };
-}
-function centralDistance(r, c) { return Math.abs(r - 7.5) + Math.abs(c - 7.5); }
 function openingCandidates() { return [[7,7], [7,8], [8,7], [8,8]]; }
-function frontierCandidates() {
-  const nearby = new Map();
-  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (board[r][c]) for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) { const rr = r + dr, cc = c + dc; if (inBoard(rr, cc) && !board[rr][cc]) nearby.set(cellKey(rr,cc), [rr, cc]); }
-  return [...nearby.values()];
-}
-function candidateScore(own, opponent, r, c) {
-  return (own.winsNow ? 1_000_000 : 0) + (opponent.winsNow ? 900_000 : 0) + (own.openFour ? 100_000 : 0) + (opponent.openFour ? 80_000 : 0) + (own.openThree ? 10_000 : 0) + (opponent.openThree ? 8_000 : 0) + own.longestRun * 250 + opponent.longestRun * 180 + own.openEnds * 40 + own.own * 18 + own.opponent * 9 - centralDistance(r, c);
-}
 function selectMoveCandidates() {
-  const ownWins = immediateWins(jevMark); if (ownWins.length) return { tier:'immediate_win', cells:ownWins };
-  const opponentWins = immediateWins(humanMark); if (opponentWins.length) return { tier:'block_immediate_win', cells:opponentWins };
-  if (history.length === 0) return { tier:'opening_center', cells:openingCandidates() };
-  const ranked = frontierCandidates().map(([r,c]) => { const own = moveFacts(r,c,jevMark), opponent = moveFacts(r,c,humanMark); return { r, c, score:candidateScore(own, opponent, r, c) }; }).sort((a,b) => b.score - a.score || centralDistance(a.r,a.c) - centralDistance(b.r,b.c));
-  return { tier:'ranked_frontier', cells:ranked.slice(0, MAX_CANDIDATES).map(({r,c}) => [r,c]) };
+  const cells = empties();
+  // A TypeSafe choice accepts at most 255 options. A normal human-first game
+  // reaches Jev with exactly 255 empty cells; only the Jev-first opening has 256.
+  return cells.length <= 255
+    ? { tier:'all_legal_moves', cells }
+    : { tier:'opening_center_limit', cells:openingCandidates() };
 }
 function compactState(extra = {}) {
   const stones = []; for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (board[r][c]) stones.push({ cell:cellKey(r,c), mark:board[r][c] });
   return { game:'16 by 16 Gomoku. Five or more in a row wins unless both ends of the maximal run are blocked by the opponent.', board:{ size:16, stones, coordinate_system:'Rows A-P top to bottom; columns 1-16 left to right.' }, current_player:jevMark, opponent:humanMark, recent_moves:history.slice(-12), ...extra };
 }
 function moveRequest(selection) {
-  const criteria = Object.fromEntries(selection.cells.map(([r,c], index) => { const own = moveFacts(r,c,jevMark), opponent = moveFacts(r,c,humanMark); return [cellKey(r,c), { candidate_rank:index + 1, selection_tier:selection.tier, wins_now:own.winsNow, blocks_opponent_win:opponent.winsNow, own_longest_run_after_move:own.longestRun, own_open_ends_after_move:own.openEnds, creates_open_four:own.openFour, creates_open_three:own.openThree, blocks_opponent_open_four:opponent.openFour, blocks_opponent_open_three:opponent.openThree, adjacent_own_stones:own.own, adjacent_opponent_stones:own.opponent, center_distance:centralDistance(r,c) }]; }));
-  const instructions = { immediate_win:`You play ${jevMark}. Every offered move wins now under the blocked-both-ends rule. Choose one legal winning move.`, block_immediate_win:`You play ${jevMark}. Every offered move blocks ${humanMark}'s immediate win. Choose the strongest legal block.`, opening_center:`You play ${jevMark} on an empty board. Choose one of the four central cells H8, H9, I8, I9.`, ranked_frontier:`You play ${jevMark}. Choose the best legal Gomoku move from these code-ranked frontier candidates. Priority: immediate win; block ${humanMark}'s immediate win; create or block open four; create or block open three; then prefer longer friendly lines with open ends. Do not choose outside the offered candidates.` }[selection.tier];
-  return { model:'jev-latest', state:compactState({ decision:'Choose one legal move from a dynamic, code-validated action space.', selection_tier:selection.tier }), questions:{ next_move:{ type:'choice', instructions, criteria } } };
+  // The values below are labels only: no tactical score or per-cell inference is
+  // computed in the browser. Jev receives the authoritative stone list and must
+  // evaluate the entire position itself.
+  const criteria = Object.fromEntries(selection.cells.map(([r,c]) => [cellKey(r,c), `Legal empty cell ${cellKey(r,c)}.`]));
+  const instructions = selection.tier === 'opening_center_limit'
+    ? `You play ${jevMark} on an empty 16 by 16 Gomoku board. The API permits at most 255 choices, while the empty board has 256 cells, so this request offers the four central legal opening cells only: H8, H9, I8, I9. Choose one offered cell.`
+    : `You play ${jevMark} in 16 by 16 Gomoku against ${humanMark}. The sparse board.stones list is authoritative; coordinates use rows A-P from top to bottom and columns 1-16 from left to right. Every currently legal empty cell is offered as a key in criteria. Choose exactly one offered key. Evaluate the whole board yourself in all four directions: horizontal, vertical, diagonal down-right, and diagonal down-left. A maximal run of five or more wins unless BOTH of its ends are occupied by the opponent; a board edge is not an opponent stone. Priority: (1) make a winning move now; (2) prevent ${humanMark}'s winning move now; (3) create or stop forcing open-four threats; (4) create or stop open-three threats; (5) otherwise build connected lines with useful open ends and favor the center. Do not invent stones, coordinates, or moves outside criteria.`;
+  return { model:'jev-latest', state:compactState({ decision:'Select one move from the full current set of legal empty cells. The browser validates the returned coordinate before playing it.', selection_tier:selection.tier, legal_move_count:selection.cells.length }), questions:{ next_move:{ type:'choice', instructions, criteria } } };
 }
 async function callJev(title, request) {
   const record = { title, request:snapshot(request), response:null, status:'đang gửi' }; apiHistory.unshift(record); renderApiHistory();
   try { const response = await fetch(API_URL, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(request) }); const raw = await response.text(); let data; try { data = raw ? JSON.parse(raw) : null; } catch { record.response = { error:{ message:raw || 'Empty response' } }; record.status = `HTTP ${response.status} · non-JSON`; renderApiHistory(); throw new Error(`API returned non-JSON data (HTTP ${response.status}).`); } record.response = snapshot(data ?? { error:{ message:'Empty response body' } }); record.status = `HTTP ${response.status}`; renderApiHistory(); if (!response.ok) throw new Error(data?.error?.message || `API returned HTTP ${response.status}.`); return data; } catch (error) { if (record.status === 'đang gửi') { record.response = { error:{ message:error.message } }; record.status = 'network error'; renderApiHistory(); } throw error; }
 }
 async function playJevTurn() {
-  if (complete) return; locked = true; render(); const selection = selectMoveCandidates(); setMessage(`Jev đang chọn ô (${selection.cells.length} candidate · ${selection.tier})…`, 'thinking'); $('api-state').textContent = 'đang gọi API'; const request = moveRequest(selection);
+  if (complete) return; locked = true; render(); const selection = selectMoveCandidates(); setMessage(`Jev đang chọn trong ${selection.cells.length} ô hợp lệ (${selection.tier})…`, 'thinking'); $('api-state').textContent = 'đang gọi API'; const request = moveRequest(selection);
   try { const answer = await callJev(`Jev chọn ô · ${selection.tier}`, request), move = answer?.answers?.next_move?.choice, match = /^([A-P])(1[0-6]|[1-9])$/.exec(move || ''); if (!match) throw new Error(`Jev trả về ô không hợp lệ: ${String(move)}`); const r = ROWS.indexOf(match[1]), c = Number(match[2]) - 1; if (!selection.cells.some(([rr,cc]) => rr === r && cc === c) || board[r][c]) throw new Error(`Jev chọn ô ngoài action space hoặc ô đã có quân: ${move}`); board[r][c] = jevMark; history.push(`${jevMark}:${move}`); $('api-state').textContent = 'đã nhận response'; if (winsAt(r,c,jevMark)) { finish(`Jev tạo hàng thắng bằng nước ${move}.`, 'loss'); return; } if (!empties().length) { finish('Bàn cờ đã hết ô — hòa.', 'draw'); return; } const confidence = answer.answers.next_move.confidence; setMessage(`Jev đánh ${move}${typeof confidence === 'number' ? ` · confidence ${Math.round(confidence * 100)}%` : ''}. Đến lượt bạn.`, 'move'); } catch (error) { $('api-state').textContent = 'lỗi API'; complete = true; setMessage(`Không thể nhận nước đi từ Jev: ${error.message}`, 'error'); } finally { locked = false; render(); }
 }
 function finish(text, kind) { complete = true; locked = true; setMessage(text, kind); render(); }
