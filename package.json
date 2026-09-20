@@ -1,0 +1,13 @@
+{
+  "name": "jev-tic-tac-toe-pages",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev web --compatibility-date=2026-09-18",
+    "deploy": "wrangler pages deploy web"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

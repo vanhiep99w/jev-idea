@@ -1,0 +1,2 @@
+# Copy this file to .dev.vars for local development. Do not commit .dev.vars.
+TYPESAFE_API_KEY=your_typesafe_api_key

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jev / Cờ caro</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Manrope:wght@500;600;700;800&display=swap');
+
+    :root { --paper:#f6f1e8; --ink:#18212b; --muted:#68717a; --line:#c9c2b7; --blue:#145d9f; --blue-wash:#deecf7; --orange:#d65524; --orange-wash:#f9e2d8; --green:#2e714d; --code:#202a35; --code-ink:#e9e5d9; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:Manrope,sans-serif; }
+    button,input { font:inherit; } button { cursor:pointer; }
+
+    .topbar { border-bottom:1px solid var(--ink); }
+    .topbar-inner { max-width:1400px; min-height:72px; margin:auto; padding:13px clamp(18px,4vw,54px); display:flex; align-items:center; justify-content:space-between; gap:18px; }
+    .brand { display:flex; align-items:baseline; gap:12px; white-space:nowrap; }
+    .brand-tag { color:var(--blue); font:700 10px/1 "DM Mono",monospace; letter-spacing:.13em; }
+    h1 { margin:0; font:650 clamp(23px,3vw,34px)/1 Fraunces,serif; letter-spacing:-.04em; }
+    .actions { display:flex; align-items:center; justify-content:flex-end; gap:7px; }
+    .mini-button, .improve-control { min-height:34px; border:1px solid var(--ink); background:transparent; color:var(--ink); padding:7px 10px; font:700 10px/1 "DM Mono",monospace; letter-spacing:.05em; text-transform:uppercase; }
+    .mini-button:hover { color:var(--paper); background:var(--ink); }
+    .improve-wrap { position:relative; }
+    .improve-control { display:flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
+    .improve-control input { appearance:none; width:11px; height:11px; margin:0; border:1px solid var(--ink); background:var(--paper); }
+    .improve-control input:checked { background:var(--orange); box-shadow:inset 0 0 0 2px var(--paper); }
+    .improve-control:has(input:checked) { border-color:var(--orange); color:#963916; background:var(--orange-wash); }
+    .tooltip { visibility:hidden; opacity:0; pointer-events:none; position:absolute; z-index:5; right:0; top:calc(100% + 8px); width:min(310px,calc(100vw - 36px)); padding:13px 14px; border:1px solid var(--ink); background:#fffaf2; box-shadow:4px 4px 0 var(--ink); color:var(--ink); font-size:12px; line-height:1.55; letter-spacing:0; text-transform:none; transition:opacity .15s ease, transform .15s ease; transform:translateY(-3px); }
+    .tooltip strong { display:block; font:700 10px/1.3 "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; color:var(--orange); margin-bottom:5px; }
+    .improve-wrap:hover .tooltip, .improve-wrap:focus-within .tooltip { visibility:visible; opacity:1; transform:translateY(0); }
+
+    main { max-width:1400px; margin:auto; padding:clamp(24px,4vw,48px) clamp(18px,4vw,54px) 60px; }
+    .workspace { display:grid; grid-template-columns:minmax(0,480px) minmax(0,1fr); gap:clamp(34px,5vw,78px); align-items:start; }
+    .board-side { min-width:0; }
+    .section-label { display:flex; justify-content:space-between; gap:15px; border-top:2px solid var(--ink); padding-top:10px; margin-bottom:16px; color:var(--ink); font:700 10px/1.3 "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; }
+    #role-label { color:var(--blue); }
+    .board { display:grid; width:100%; grid-template-columns:repeat(3,minmax(0,1fr)); grid-template-rows:repeat(3,minmax(0,1fr)); aspect-ratio:1; gap:2px; border:2px solid var(--ink); background:var(--ink); overflow:hidden; }
+    .cell { min-width:0; min-height:0; border:0; background:var(--paper); color:var(--ink); position:relative; display:grid; place-items:center; font:650 clamp(47px,8vw,94px)/1 Fraunces,serif; transition:background .14s ease,color .14s ease; }
+    .cell:enabled:hover { background:var(--orange-wash); }
+    .cell:focus-visible { outline:4px solid var(--blue); outline-offset:-5px; z-index:1; }
+    .cell.empty::after { content:attr(data-cell); position:absolute; top:8px; left:9px; color:#8b918f; font:500 10px "DM Mono",monospace; letter-spacing:.05em; }
+    .cell.x { color:var(--blue); }.cell.o { color:var(--orange); }
+    .game-message { margin-top:14px; min-height:54px; border-left:4px solid var(--blue); padding:7px 11px; background:var(--blue-wash); }
+    .message-kicker { display:block; color:var(--blue); font:700 10px/1.3 "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; }
+    #status { display:block; margin-top:2px; font:700 14px/1.42 Manrope,sans-serif; }
+    .game-message[data-kind="win"] { border-color:var(--green); background:#dceee2; }.game-message[data-kind="win"] .message-kicker { color:var(--green); }
+    .game-message[data-kind="loss"],.game-message[data-kind="error"] { border-color:var(--orange); background:var(--orange-wash); }.game-message[data-kind="loss"] .message-kicker,.game-message[data-kind="error"] .message-kicker { color:var(--orange); }
+    .game-message[data-kind="draw"] { border-color:#7b5d14; background:#f5e8bc; }.game-message[data-kind="draw"] .message-kicker { color:#735507; }
+
+    .trace { min-width:0; }
+    .trace-head { border-top:2px solid var(--ink); padding:10px 0 15px; display:flex; justify-content:space-between; font:700 10px/1.3 "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; }
+    #api-state { color:var(--muted); }
+    .call { margin-bottom:19px; padding-bottom:19px; border-bottom:1px solid var(--line); }
+    .call[hidden] { display:none; }
+    .call-meta { display:flex; align-items:baseline; justify-content:space-between; gap:15px; margin-bottom:8px; }
+    .call-meta strong { font:650 17px Fraunces,serif; }
+    .pill { flex:0 0 auto; padding:3px 6px; background:var(--blue-wash); color:var(--blue); font:700 9px "DM Mono",monospace; letter-spacing:.06em; text-transform:uppercase; }
+    .response .pill { background:var(--orange-wash); color:#933714; }
+    pre { margin:0; max-height:350px; overflow:auto; padding:15px; border-left:4px solid #798796; background:var(--code); color:var(--code-ink); font:12px/1.55 "DM Mono",monospace; white-space:pre-wrap; word-break:break-word; }
+    .response pre { border-color:var(--orange); }.response { display:none; }.response.visible { display:block; }
+    .empty-trace { padding:18px 0; color:var(--muted); font-size:13px; line-height:1.6; }
+
+    @media (max-width:960px) { .workspace { grid-template-columns:1fr; gap:38px; }.board-side { max-width:530px; }.trace { max-width:760px; } }
+    @media (max-width:560px) { .topbar-inner { align-items:flex-start; flex-direction:column; }.actions { width:100%; justify-content:flex-start; }.mini-button,.improve-control { padding:8px; }.brand { gap:9px; } }
+  </style>
+</head>
+<body>
+  <header class="topbar"><div class="topbar-inner">
+    <div class="brand"><span class="brand-tag">JEV / SYSTEM ONE</span><h1>Cờ caro</h1></div>
+    <div class="actions">
+      <div class="improve-wrap">
+        <label class="improve-control" for="improve-prompt"><input id="improve-prompt" type="checkbox" /><span>Improve</span></label>
+        <div class="tooltip" role="tooltip"><strong>Improve prompt làm gì?</strong>Không bật: Jev chỉ thấy các ô trống và tự phải tìm nước thắng/chặn thắng; nó có thể bỏ sót tình huống như <b>B1 / B3</b>.<br><br>Bật: game engine thêm fact chiến thuật vào từng <code>criteria</code>. Nếu Jev đi trước, prompt nêu rõ <b>B2</b> là center (4 đường thắng), corner có 3, edge có 2. Jev vẫn là bên chọn, nhưng không phải tự suy luận phần luật rõ ràng.</div>
+      </div>
+      <button id="jev-first" class="mini-button" type="button">Jev đi trước</button>
+      <button id="new-game" class="mini-button" type="button">Ván mới ↻</button>
+    </div>
+  </div></header>
+
+  <main><section class="workspace">
+    <div class="board-side">
+      <div class="section-label"><span id="role-label">Bạn X · Jev O</span><span id="move-count">0 nước</span></div>
+      <div id="board" class="board" aria-label="Bàn cờ caro 3 nhân 3"></div>
+      <div class="game-message" id="game-message" data-kind="ready" role="status" aria-live="polite"><span class="message-kicker" id="message-kicker">Sẵn sàng</span><strong id="status">Chọn một ô trống để đánh X.</strong></div>
+    </div>
+
+    <div class="trace">
+      <div class="trace-head"><span>Request / response</span><span id="api-state">chờ nước đi</span></div>
+      <div id="trace-empty" class="empty-trace">Mỗi lượt Jev sẽ hiện request state + choice và response thật tại đây.</div>
+      <article class="call" id="request-panel" hidden><div class="call-meta"><strong>Request</strong><span class="pill">systemone</span></div><pre id="request-json"></pre></article>
+      <article class="call response" id="response-panel"><div class="call-meta"><strong>Response</strong><span class="pill">next_move</span></div><pre id="response-json"></pre></article>
+    </div>
+  </section></main>
+
+  <script>
+    const API_URL = '/api/systemone';
+    const CELLS = ['A1','A2','A3','B1','B2','B3','C1','C2','C3'];
+    const LINES = [['A1','A2','A3'],['B1','B2','B3'],['C1','C2','C3'],['A1','B1','C1'],['A2','B2','C2'],['A3','B3','C1']];
+    let board, history, locked, complete, humanMark, jevMark;
+    const $ = (id) => document.getElementById(id);
+    const pretty = (value) => JSON.stringify(value, null, 2);
+
+    function setMessage(message, kind = 'ready') {
+      const labels = { ready:'Sẵn sàng', thinking:'Jev đang suy nghĩ', move:'Nước đi của Jev', win:'Kết quả — bạn thắng', loss:'Kết quả — Jev thắng', draw:'Kết quả — hòa', error:'Lỗi kết nối' };
+      $('game-message').dataset.kind = kind;
+      $('message-kicker').textContent = labels[kind] || labels.ready;
+      $('status').textContent = message;
+    }
+
+    function reset(jevStarts = false) {
+      humanMark = jevStarts ? 'O' : 'X';
+      jevMark = jevStarts ? 'X' : 'O';
+      board = Object.fromEntries(CELLS.map(cell => [cell, '']));
+      history = []; locked = jevStarts; complete = false;
+      $('request-panel').hidden = true; $('response-panel').classList.remove('visible'); $('trace-empty').hidden = false;
+      $('api-state').textContent = 'chờ nước đi';
+      setMessage(jevStarts ? 'Jev là X và sẽ đi nước đầu tiên.' : 'Bạn là X. Chọn một ô trống để đánh.');
+      render();
+      if (jevStarts) setTimeout(playJevTurn, 120);
+    }
+
+    function render() {
+      const root = $('board'); root.innerHTML = '';
+      CELLS.forEach(cell => {
+        const mark = board[cell]; const button = document.createElement('button');
+        button.className = `cell ${mark ? mark.toLowerCase() : 'empty'}`;
+        button.dataset.cell = cell; button.textContent = mark;
+        button.disabled = Boolean(mark) || locked || complete;
+        button.setAttribute('aria-label', mark ? `Ô ${cell}: ${mark}` : `Đánh ${humanMark} vào ô ${cell}`);
+        button.addEventListener('click', () => humanMove(cell)); root.appendChild(button);
+      });
+      $('role-label').textContent = `Bạn ${humanMark} · Jev ${jevMark}`;
+      $('move-count').textContent = `${history.length} nước`;
+    }
+
+    function available(candidateBoard = board) { return CELLS.filter(cell => !candidateBoard[cell]); }
+    function winnerFor(candidateBoard) { const line = LINES.find(([a,b,c]) => candidateBoard[a] && candidateBoard[a] === candidateBoard[b] && candidateBoard[b] === candidateBoard[c]); return line ? candidateBoard[line[0]] : null; }
+    function immediateWinningMoves(mark, candidateBoard = board) { return available(candidateBoard).filter(cell => winnerFor({ ...candidateBoard, [cell]:mark }) === mark); }
+    function finish(message, kind) { complete = true; locked = true; setMessage(message, kind); render(); }
+
+    function buildRequest() {
+      const improved = $('improve-prompt').checked;
+      // A blank board only occurs when Jev starts as X. Immediate-win/block analysis is useless then.
+      const isJevOpening = history.length === 0 && jevMark === 'X';
+      const opponentThreats = immediateWinningMoves(humanMark);
+      const criteria = Object.fromEntries(available().map(cell => {
+        if (!improved) return [cell, `Empty legal board cell ${cell}`];
+
+        if (isJevOpening) {
+          const winningLines = LINES.filter(line => line.includes(cell)).length;
+          let openingStrategy;
+          if (cell === 'B2') openingStrategy = 'Center cell. It belongs to 4 winning lines; this is the strongest opening move.';
+          else if (['A1','A3','C1','C3'].includes(cell)) openingStrategy = `Corner cell. It belongs to ${winningLines} winning lines; strongest alternative to the center.`;
+          else openingStrategy = `Edge cell. It belongs to ${winningLines} winning lines; weaker opening than center or a corner.`;
+          return [cell, { cell, legal:true, phase:'opening', opening_strategy:openingStrategy }];
+        }
+
+        const afterJev = { ...board, [cell]:jevMark }; const opponentWinsNext = immediateWinningMoves(humanMark, afterJev);
+        let tacticalEffect;
+        if (winnerFor(afterJev) === jevMark) tacticalEffect = `Playing ${jevMark} here wins immediately.`;
+        else if (opponentThreats.includes(cell)) tacticalEffect = `Blocks ${humanMark}'s immediate winning move at ${cell}.`;
+        else if (opponentWinsNext.length) tacticalEffect = `Does not block ${humanMark}'s immediate threat. ${humanMark} can win next at: ${opponentWinsNext.join(', ')}.`;
+        else tacticalEffect = 'No player has an immediate winning move after this move.';
+        return [cell, { cell, legal:true, phase:'tactical', tactical_effect:tacticalEffect }];
+      }));
+      return {
+        model:'jev-latest',
+        state:{
+          game:'Tic-tac-toe on a 3 by 3 board. Three identical marks in a row, column, or diagonal wins.',
+          board:{ rows:[[board.A1,board.A2,board.A3],[board.B1,board.B2,board.B3],[board.C1,board.C2,board.C3]], cell_names:'Rows A/B/C top to bottom; columns 1/2/3 left to right; empty string means empty.' },
+          current_player:jevMark, opponent:humanMark, move_history:history
+        },
+        questions:{ next_move:{ type:'choice', instructions:improved ? (isJevOpening ? `You play ${jevMark} and this is the opening move on an empty tic-tac-toe board. Choose B2 (the center) because it belongs to 4 winning lines. Choose a corner only if B2 is unavailable. Avoid an edge when center or a corner is available. Each criterion states the opening value of its cell.` : `You play ${jevMark} in tic-tac-toe. Choose the best legal move. Each criterion includes deterministic tactical analysis. Prefer an immediate win; otherwise block ${humanMark}'s immediate win; otherwise maximize your chance to win and avoid losing.`) : `You play ${jevMark} in tic-tac-toe. Choose the best legal move from the listed empty cells. Prefer an immediate win; otherwise block ${humanMark}'s immediate win; otherwise maximize your chance to win and avoid losing.`, criteria } }
+      };
+    }
+
+    async function playJevTurn() {
+      if (complete || !available().length) return;
+      locked = true; render(); setMessage('Đang gửi state đến Jev…', 'thinking'); $('api-state').textContent = 'đang gọi API';
+      const requestBody = buildRequest(); $('request-json').textContent = pretty(requestBody); $('request-panel').hidden = false; $('trace-empty').hidden = true; $('response-panel').classList.remove('visible');
+      try {
+        const response = await fetch(API_URL, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(requestBody) });
+        const rawBody = await response.text(); let payload;
+        try { payload = rawBody ? JSON.parse(rawBody) : null; } catch { $('response-json').textContent = rawBody || '(empty response body)'; $('response-panel').classList.add('visible'); throw new Error(`API returned non-JSON data (HTTP ${response.status}).`); }
+        $('response-json').textContent = pretty(payload ?? { error:{ message:'Empty response body' } }); $('response-panel').classList.add('visible');
+        if (!response.ok) throw new Error(payload?.error?.message || `Local endpoint ${location.origin}${API_URL} returned empty HTTP ${response.status}. Open via localhost:8000, not Live Server.`);
+        const move = payload?.answers?.next_move?.choice;
+        if (!available().includes(move)) throw new Error(`Jev trả về ô không hợp lệ: ${String(move)}`);
+        board[move] = jevMark; history.push(`${jevMark}:${move}`);
+        const confidence = payload.answers.next_move.confidence; const confidenceText = typeof confidence === 'number' ? ` · confidence ${Math.round(confidence * 100)}%` : '';
+        $('api-state').textContent = 'đã nhận response';
+        if (winnerFor(board) === jevMark) { finish(`Jev hoàn thành một hàng ${jevMark} với nước ${move}.`, 'loss'); return; }
+        if (!available().length) { finish('Không còn ô trống — ván cờ hòa.', 'draw'); return; }
+        setMessage(`Jev chọn ${move}${confidenceText}. Đến lượt bạn.`, 'move');
+      } catch (error) {
+        $('api-state').textContent = 'lỗi API'; complete = true; setMessage(`Không thể nhận nước đi từ Jev: ${error.message}`, 'error');
+      } finally { locked = false; render(); }
+    }
+
+    async function humanMove(cell) {
+      if (locked || complete || board[cell]) return;
+      board[cell] = humanMark; history.push(`${humanMark}:${cell}`);
+      if (winnerFor(board) === humanMark) { finish(`Bạn đã tạo một hàng ${humanMark}.`, 'win'); return; }
+      if (!available().length) { finish('Không còn ô trống — ván cờ hòa.', 'draw'); return; }
+      render(); await playJevTurn();
+    }
+
+    $('new-game').addEventListener('click', () => reset(false));
+    $('jev-first').addEventListener('click', () => reset(true));
+    $('improve-prompt').addEventListener('change', (event) => { if (!locked && !complete) setMessage(event.target.checked ? 'Improve Prompt bật — lượt Jev tiếp theo sẽ nhận facts chiến thuật.' : 'Improve Prompt tắt — Jev chỉ nhận danh sách ô trống.'); });
+    reset(false);
+  </script>
+</body>
+</html>
