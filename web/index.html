@@ -157,36 +157,56 @@
     function immediateWinningMoves(mark, candidateBoard = board) { return available(candidateBoard).filter(cell => winnerFor({ ...candidateBoard, [cell]:mark }) === mark); }
     function finish(message, kind) { complete = true; locked = true; setMessage(message, kind); render(); }
 
-    function buildRequest() {
-      // A blank board only occurs when Jev starts as X. Immediate-win/block analysis is useless then.
-      const isJevOpening = history.length === 0 && jevMark === 'X';
-      const opponentThreats = immediateWinningMoves(humanMark);
-      const criteria = Object.fromEntries(available().map(cell => {
-        if (isJevOpening) {
-          const winningLines = LINES.filter(line => line.includes(cell)).length;
-          let openingStrategy;
-          if (cell === 'B2') openingStrategy = 'Center cell. It belongs to 4 winning lines; this is the strongest opening move.';
-          else if (['A1','A3','C1','C3'].includes(cell)) openingStrategy = `Corner cell. It belongs to ${winningLines} winning lines; strongest alternative to the center.`;
-          else openingStrategy = `Edge cell. It belongs to ${winningLines} winning lines; weaker opening than center or a corner.`;
-          return [cell, { cell, legal:true, phase:'opening', opening_strategy:openingStrategy }];
-        }
+    function solveTicTacToe(candidateBoard, turn, cache) {
+      const winner = winnerFor(candidateBoard);
+      if (winner) return winner === jevMark ? 1 : -1;
+      const moves = available(candidateBoard);
+      if (!moves.length) return 0;
+      const key = `${turn}:${CELLS.map(cell => candidateBoard[cell] || '.').join('')}`;
+      if (cache.has(key)) return cache.get(key);
+      const scores = moves.map(cell => solveTicTacToe({ ...candidateBoard, [cell]:turn }, turn === jevMark ? humanMark : jevMark, cache));
+      const score = turn === jevMark ? Math.max(...scores) : Math.min(...scores);
+      cache.set(key, score); return score;
+    }
+    function outcomeLabel(score) { return score === 1 ? 'FORCED_WIN' : score === 0 ? 'FORCED_DRAW' : 'FORCED_LOSS'; }
+    function boardView() { return ['A','B','C'].map((row, rowIndex) => `${row} | ${[1,2,3].map(column => board[`${row}${column}`] || '.').join('')}`); }
 
-        const afterJev = { ...board, [cell]:jevMark }; const opponentWinsNext = immediateWinningMoves(humanMark, afterJev);
-        let tacticalEffect;
-        if (winnerFor(afterJev) === jevMark) tacticalEffect = `Playing ${jevMark} here wins immediately.`;
-        else if (opponentThreats.includes(cell)) tacticalEffect = `Blocks ${humanMark}'s immediate winning move at ${cell}.`;
-        else if (opponentWinsNext.length) tacticalEffect = `Does not block ${humanMark}'s immediate threat. ${humanMark} can win next at: ${opponentWinsNext.join(', ')}.`;
-        else tacticalEffect = 'No player has an immediate winning move after this move.';
-        return [cell, { cell, legal:true, phase:'tactical', tactical_effect:tacticalEffect }];
+    function buildRequest() {
+      const ownWins = immediateWinningMoves(jevMark), opponentWins = immediateWinningMoves(humanMark);
+      const offeredCells = ownWins.length ? ownWins : opponentWins.length ? opponentWins : available();
+      const selectionTier = ownWins.length ? 'immediate_win' : opponentWins.length ? 'block_immediate_win' : 'all_legal_moves';
+      const isJevOpening = history.length === 0 && jevMark === 'X';
+      const cache = new Map();
+      const criteria = Object.fromEntries(offeredCells.map(cell => {
+        const afterJev = { ...board, [cell]:jevMark };
+        const score = solveTicTacToe(afterJev, humanMark, cache);
+        const opponentWinsNext = immediateWinningMoves(humanMark, afterJev);
+        const tags = [], evidence = [];
+        if (winnerFor(afterJev) === jevMark) { tags.push('WIN_NOW'); evidence.push(`Playing ${jevMark} at ${cell} wins immediately.`); }
+        if (opponentWins.includes(cell)) { tags.push('BLOCK_OPPONENT_WIN_NOW'); evidence.push(`Blocks ${humanMark}'s immediate winning move at ${cell}.`); }
+        if (opponentWinsNext.length) { tags.push('ALLOWS_OPPONENT_WIN_NEXT'); evidence.push(`${humanMark} can win next at ${opponentWinsNext.join(', ')}.`); }
+        if (isJevOpening && cell === 'B2') { tags.push('CENTER_OPENING'); evidence.push('Center belongs to four winning lines.'); }
+        return [cell, { legal:true, tactical_tags:tags, forced_outcome:outcomeLabel(score), evidence }];
       }));
       return {
         model:'jev-latest',
         state:{
-          game:'Tic-tac-toe on a 3 by 3 board. Three identical marks in a row, column, or diagonal wins.',
-          board:{ rows:[[board.A1,board.A2,board.A3],[board.B1,board.B2,board.B3],[board.C1,board.C2,board.C3]], cell_names:'Rows A/B/C top to bottom; columns 1/2/3 left to right; empty string means empty.' },
-          current_player:jevMark, opponent:humanMark, move_history:history
+          game_rules:'Tic-tac-toe on a 3 by 3 board. Three identical marks in a row, column, or diagonal wins.',
+          board:{ rows:[[board.A1,board.A2,board.A3],[board.B1,board.B2,board.B3],[board.C1,board.C2,board.C3]], visual_rows:boardView(), visual_legend:"'.' is empty; X and O are stones.", cell_names:'Rows A/B/C top to bottom; columns 1/2/3 left to right.' },
+          current_player:jevMark,
+          opponent:humanMark,
+          move_history:history,
+          selection_tier:selectionTier,
+          tactical_alerts:{ immediate_winning_cells:{ [jevMark]:ownWins, [humanMark]:opponentWins }, forced_loss_warning:!ownWins.length && opponentWins.length > 1 ? `${humanMark} has multiple immediate winning cells; no single block stops all of them.` : null },
+          strategy_policy:[
+            'tactical_alerts and tactical_tags are calculated by the game engine and are authoritative.',
+            'Choose WIN_NOW before all other moves. If BLOCK_OPPONENT_WIN_NOW is offered, choose one of those cells.',
+            'Among remaining moves, prefer FORCED_WIN, then FORCED_DRAW; never choose FORCED_LOSS when a draw or win exists.',
+            'For an empty opening board, choose CENTER_OPENING when it is available.',
+            'Return only a coordinate in criteria.'
+          ]
         },
-        questions:{ next_move:{ type:'choice', instructions:isJevOpening ? `You play ${jevMark} and this is the opening move on an empty tic-tac-toe board. Choose B2 (the center) because it belongs to 4 winning lines. Choose a corner only if B2 is unavailable. Avoid an edge when center or a corner is available. Each criterion states the opening value of its cell.` : `You play ${jevMark} in tic-tac-toe. Choose the best legal move. Each criterion includes deterministic tactical analysis. Prefer an immediate win; otherwise block ${humanMark}'s immediate win; otherwise maximize your chance to win and avoid losing.`, criteria } }
+        questions:{ next_move:{ type:'choice', instructions:'Return exactly one legal coordinate key from criteria. Follow state.tactical_alerts, tactical_tags, and forced_outcome.', criteria } }
       };
     }
 

@@ -68,7 +68,13 @@ function render() {
   $('roles').textContent = `Bạn ${humanMark} · Jev ${jevMark}`; $('moves').textContent = `${history.length} nước`;
 }
 function inBoard(r, c) { return r >= 0 && r < SIZE && c >= 0 && c < SIZE; }
-function empties() { const result = []; for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (!board[r][c]) result.push([r, c]); return result; }
+function emptyCells(testBoard = board) {
+  const result = [];
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (!testBoard[r][c]) result.push([r, c]);
+  return result;
+}
+function empties() { return emptyCells(); }
+function cloneWith(r, c, mark, testBoard = board) { const next = testBoard.map((row) => [...row]); next[r][c] = mark; return next; }
 function winsAt(r, c, mark, testBoard = board) {
   for (const [dr, dc] of DIRECTIONS) {
     let startR = r, startC = c, endR = r, endC = c;
@@ -83,17 +89,91 @@ function winsAt(r, c, mark, testBoard = board) {
   }
   return false;
 }
+function immediateWins(mark, testBoard = board) {
+  return emptyCells(testBoard).filter(([r, c]) => winsAt(r, c, mark, cloneWith(r, c, mark, testBoard)));
+}
+function directionName(dr, dc) { return dr === 0 ? 'horizontal' : dc === 0 ? 'vertical' : dc === 1 ? 'diagonal down-right' : 'diagonal down-left'; }
+function lineProfile(r, c, dr, dc, mark, testBoard) {
+  let startR = r, startC = c, endR = r, endC = c;
+  while (inBoard(startR - dr, startC - dc) && testBoard[startR - dr][startC - dc] === mark) { startR -= dr; startC -= dc; }
+  while (inBoard(endR + dr, endC + dc) && testBoard[endR + dr][endC + dc] === mark) { endR += dr; endC += dc; }
+  const cells = [];
+  for (let rr = startR, cc = startC; ; rr += dr, cc += dc) { cells.push(cellKey(rr, cc)); if (rr === endR && cc === endC) break; }
+  const before = [startR - dr, startC - dc], after = [endR + dr, endC + dc];
+  const openCells = [before, after].filter(([rr, cc]) => inBoard(rr, cc) && testBoard[rr][cc] === '').map(([rr, cc]) => cellKey(rr, cc));
+  return { direction:directionName(dr, dc), cells, length:cells.length, open_cells:openCells, open_ends:openCells.length };
+}
+function threatLines(mark, testBoard = board) {
+  const result = [], seen = new Set();
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    if (testBoard[r][c] !== mark) continue;
+    for (const [dr, dc] of DIRECTIONS) {
+      if (inBoard(r - dr, c - dc) && testBoard[r - dr][c - dc] === mark) continue;
+      let endR = r, endC = c;
+      while (inBoard(endR + dr, endC + dc) && testBoard[endR + dr][endC + dc] === mark) { endR += dr; endC += dc; }
+      const key = `${r},${c}:${endR},${endC}:${dr},${dc}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const profile = lineProfile(r, c, dr, dc, mark, testBoard);
+      const kind = profile.length >= 4 && profile.open_ends === 2 ? 'open_four'
+        : profile.length >= 4 && profile.open_ends === 1 ? 'four'
+        : profile.length === 3 && profile.open_ends === 2 ? 'open_three' : null;
+      if (kind) result.push({ player:mark, kind, ...profile });
+    }
+  }
+  return result;
+}
 function openingCandidates() { return [[7,7], [7,8], [8,7], [8,8]]; }
 function selectMoveCandidates() {
+  const ownWins = immediateWins(jevMark), opponentWins = immediateWins(humanMark);
+  if (ownWins.length) return { tier:'immediate_win', cells:ownWins, ownWins, opponentWins };
+  if (opponentWins.length) return { tier:'block_immediate_win', cells:opponentWins, ownWins, opponentWins };
   const cells = empties();
   // A TypeSafe choice accepts at most 255 options. A normal human-first game
   // reaches Jev with exactly 255 empty cells; only the Jev-first opening has 256.
   return cells.length <= 255
-    ? { tier:'all_legal_moves', cells }
-    : { tier:'opening_center_limit', cells:openingCandidates() };
+    ? { tier:'all_legal_moves', cells, ownWins, opponentWins }
+    : { tier:'opening_center_limit', cells:openingCandidates(), ownWins, opponentWins };
 }
-function boardView() {
-  return ROWS.map((row, r) => `${row} | ${board[r].map((mark) => mark || '.').join('')}`);
+function boardView() { return ROWS.map((row, r) => `${row} | ${board[r].map((mark) => mark || '.').join('')}`); }
+function summariseLines(lines, kind) {
+  return lines.filter((line) => line.kind === kind).slice(0, 8).map(({ player, direction, cells, open_cells }) => ({ player, direction, stones:cells, extension_cells:open_cells }));
+}
+function tacticalContext(selection) {
+  const ownLines = threatLines(jevMark), opponentLines = threatLines(humanMark);
+  return {
+    ownWins:selection.ownWins,
+    opponentWins:selection.opponentWins,
+    ownLines,
+    opponentLines,
+    opponentOpenFours:opponentLines.filter((line) => line.kind === 'open_four' || line.kind === 'four'),
+    opponentOpenThrees:opponentLines.filter((line) => line.kind === 'open_three')
+  };
+}
+function candidateCriterion(r, c, context) {
+  const cell = cellKey(r, c), testBoard = cloneWith(r, c, jevMark);
+  const profiles = DIRECTIONS.map(([dr, dc]) => lineProfile(r, c, dr, dc, jevMark, testBoard));
+  const openFours = profiles.filter((line) => line.length >= 4 && line.open_ends === 2);
+  const openThrees = profiles.filter((line) => line.length === 3 && line.open_ends === 2);
+  const tags = [], evidence = [], warnings = [];
+  if (winsAt(r, c, jevMark, testBoard)) { tags.push('WIN_NOW'); evidence.push(`Placing ${jevMark} at ${cell} creates a legal five-or-more run.`); }
+  if (context.opponentWins.some(([rr, cc]) => rr === r && cc === c)) { tags.push('BLOCK_OPPONENT_WIN_NOW'); evidence.push(`Blocks ${humanMark}'s immediate winning cell ${cell}.`); }
+  for (const line of context.opponentOpenFours.filter((line) => line.open_cells.includes(cell))) { tags.push('BLOCK_OPPONENT_OPEN_FOUR'); evidence.push(`Blocks ${humanMark}'s ${line.kind.replace('_', ' ')} on ${line.cells.join('-')} (${line.direction}).`); }
+  for (const line of context.opponentOpenThrees.filter((line) => line.open_cells.includes(cell))) { tags.push('BLOCK_OPPONENT_OPEN_THREE'); evidence.push(`Blocks ${humanMark}'s open three on ${line.cells.join('-')} (${line.direction}).`); }
+  for (const line of openFours) { tags.push('CREATE_OPEN_FOUR'); evidence.push(`Creates an open four on ${line.cells.join('-')} with extensions ${line.open_cells.join(', ')}.`); }
+  for (const line of openThrees) { tags.push('CREATE_OPEN_THREE'); evidence.push(`Creates an open three on ${line.cells.join('-')} with extensions ${line.open_cells.join(', ')}.`); }
+  if (openFours.length > 1 || (openFours.length && openThrees.length)) { tags.push('CREATE_DOUBLE_THREAT'); evidence.push('Creates more than one independent forcing threat.'); }
+  if (context.opponentWins.length > 1 && context.opponentWins.some(([rr, cc]) => rr === r && cc === c)) warnings.push(`${humanMark} has multiple immediate winning cells; blocking ${cell} alone cannot stop all of them.`);
+  return tags.length || warnings.length ? { legal:true, tactical_tags:[...new Set(tags)], evidence:[...new Set(evidence)], ...(warnings.length ? { warnings } : {}) } : `Legal empty cell ${cell}.`;
+}
+function tacticalAlerts(context) {
+  return {
+    immediate_winning_cells:{ [jevMark]:context.ownWins.map(([r,c]) => cellKey(r,c)), [humanMark]:context.opponentWins.map(([r,c]) => cellKey(r,c)) },
+    opponent_open_four_lines:summariseLines(context.opponentLines, 'open_four'),
+    opponent_closed_four_lines:summariseLines(context.opponentLines, 'four'),
+    opponent_open_three_lines:summariseLines(context.opponentLines, 'open_three'),
+    forced_loss_warning:context.ownWins.length === 0 && context.opponentWins.length > 1 ? `${humanMark} has ${context.opponentWins.length} immediate winning cells; no single move blocks them all.` : null
+  };
 }
 function compactState(extra = {}) {
   const stones = []; for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (board[r][c]) stones.push({ cell:cellKey(r,c), mark:board[r][c] });
@@ -104,25 +184,22 @@ function compactState(extra = {}) {
     opponent:humanMark,
     recent_moves:history.slice(-12),
     strategy_policy:[
-      'Treat board.stones and board.visual_rows as the authoritative current position; they describe the same board.',
-      'Select exactly one legal empty coordinate from criteria. Every legal empty cell is offered unless the empty-board opening exceeds the API limit.',
-      `First search for an immediate winning move for ${jevMark}. If none exists, search for and block every immediate winning move for ${humanMark}.`,
-      'For each serious move, mentally place the stone, inspect the horizontal, vertical, diagonal down-right, and diagonal down-left lines through it, and apply the blocked-both-ends rule.',
-      'After immediate wins and blocks, compare forcing open-four threats, then open-three threats. Prefer a move that creates two independent future threats or disrupts the opponent while improving your own line.',
-      'Do not make an isolated move far from the active formation unless it is the only necessary defensive move. When choices are otherwise equivalent, prefer a central move that connects to your stones and preserves open ends.',
-      'Do not invent stones, coordinates, or moves outside criteria.'
+      'tactical_alerts is calculated by the game engine and is authoritative. Resolve immediate winning cells before positional preferences.',
+      'A criterion with WIN_NOW or BLOCK_OPPONENT_WIN_NOW is mandatory over all other tags. If an immediate-win choice is offered, select one of those choices.',
+      'Next prioritize BLOCK_OPPONENT_OPEN_FOUR, CREATE_OPEN_FOUR, BLOCK_OPPONENT_OPEN_THREE, CREATE_DOUBLE_THREAT, and CREATE_OPEN_THREE in that order of urgency.',
+      'Treat board.stones and board.visual_rows as the authoritative current position. Do not invent stones, coordinates, or moves outside criteria.',
+      'When no tactical tag decides the move, prefer connected central formations with open ends; avoid isolated stones.'
     ],
     ...extra
   };
 }
 function moveRequest(selection) {
-  // Criteria only labels legal moves. The browser does not calculate or send
-  // tactical facts, ranks, or scores for individual cells.
-  const criteria = Object.fromEntries(selection.cells.map(([r,c]) => [cellKey(r,c), `Legal empty cell ${cellKey(r,c)}.`]));
+  const context = tacticalContext(selection);
+  const criteria = Object.fromEntries(selection.cells.map(([r,c]) => [cellKey(r,c), candidateCriterion(r, c, context)]));
   const instructions = selection.tier === 'opening_center_limit'
-    ? `Return one key from criteria. The board is empty, but the API permits at most 255 choices while the board has 256 cells; only H8, H9, I8, and I9 are offered for this opening move.`
-    : 'Return exactly one coordinate key from criteria. It must be a legal empty cell at request time.';
-  return { model:'jev-latest', state:compactState({ decision:'Select one move from the full current set of legal empty cells. The browser validates the returned coordinate before playing it.', selection_tier:selection.tier, legal_move_count:selection.cells.length }), questions:{ next_move:{ type:'choice', instructions, criteria } } };
+    ? 'Return one key from criteria. The board is empty, but the API permits at most 255 choices while the board has 256 cells; only H8, H9, I8, and I9 are offered for this opening move.'
+    : 'Return exactly one coordinate key from criteria. Follow state.tactical_alerts and tactical_tags before ordinary positional preferences.';
+  return { model:'jev-latest', state:compactState({ decision:'Select one move from the current code-validated action space. The browser validates the returned coordinate before playing it.', selection_tier:selection.tier, legal_move_count:selection.cells.length, tactical_alerts:tacticalAlerts(context) }), questions:{ next_move:{ type:'choice', instructions, criteria } } };
 }
 async function callJev(title, request) {
   const record = { title, request:snapshot(request), response:null, status:'đang gửi' }; apiHistory.unshift(record); renderApiHistory();
