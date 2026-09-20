@@ -92,18 +92,36 @@ function selectMoveCandidates() {
     ? { tier:'all_legal_moves', cells }
     : { tier:'opening_center_limit', cells:openingCandidates() };
 }
+function boardView() {
+  return ROWS.map((row, r) => `${row} | ${board[r].map((mark) => mark || '.').join('')}`);
+}
 function compactState(extra = {}) {
   const stones = []; for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) if (board[r][c]) stones.push({ cell:cellKey(r,c), mark:board[r][c] });
-  return { game:'16 by 16 Gomoku. Five or more in a row wins unless both ends of the maximal run are blocked by the opponent.', board:{ size:16, stones, coordinate_system:'Rows A-P top to bottom; columns 1-16 left to right.' }, current_player:jevMark, opponent:humanMark, recent_moves:history.slice(-12), ...extra };
+  return {
+    game_rules:'16 by 16 Gomoku. A maximal horizontal, vertical, diagonal down-right, or diagonal down-left run of five or more wins unless BOTH ends of that maximal run contain an opponent stone. A board edge is not an opponent stone.',
+    board:{ size:16, stones, visual_rows:boardView(), visual_legend:"Each visual_rows string is row A-P; '.' is empty, X and O are stones. Columns are characters 1-16 from left to right.", coordinate_system:'Rows A-P top to bottom; columns 1-16 left to right.' },
+    current_player:jevMark,
+    opponent:humanMark,
+    recent_moves:history.slice(-12),
+    strategy_policy:[
+      'Treat board.stones and board.visual_rows as the authoritative current position; they describe the same board.',
+      'Select exactly one legal empty coordinate from criteria. Every legal empty cell is offered unless the empty-board opening exceeds the API limit.',
+      `First search for an immediate winning move for ${jevMark}. If none exists, search for and block every immediate winning move for ${humanMark}.`,
+      'For each serious move, mentally place the stone, inspect the horizontal, vertical, diagonal down-right, and diagonal down-left lines through it, and apply the blocked-both-ends rule.',
+      'After immediate wins and blocks, compare forcing open-four threats, then open-three threats. Prefer a move that creates two independent future threats or disrupts the opponent while improving your own line.',
+      'Do not make an isolated move far from the active formation unless it is the only necessary defensive move. When choices are otherwise equivalent, prefer a central move that connects to your stones and preserves open ends.',
+      'Do not invent stones, coordinates, or moves outside criteria.'
+    ],
+    ...extra
+  };
 }
 function moveRequest(selection) {
-  // The values below are labels only: no tactical score or per-cell inference is
-  // computed in the browser. Jev receives the authoritative stone list and must
-  // evaluate the entire position itself.
+  // Criteria only labels legal moves. The browser does not calculate or send
+  // tactical facts, ranks, or scores for individual cells.
   const criteria = Object.fromEntries(selection.cells.map(([r,c]) => [cellKey(r,c), `Legal empty cell ${cellKey(r,c)}.`]));
   const instructions = selection.tier === 'opening_center_limit'
-    ? `You play ${jevMark} on an empty 16 by 16 Gomoku board. The API permits at most 255 choices, while the empty board has 256 cells, so this request offers the four central legal opening cells only: H8, H9, I8, I9. Choose one offered cell.`
-    : `You play ${jevMark} in 16 by 16 Gomoku against ${humanMark}. The sparse board.stones list is authoritative; coordinates use rows A-P from top to bottom and columns 1-16 from left to right. Every currently legal empty cell is offered as a key in criteria. Choose exactly one offered key. Evaluate the whole board yourself in all four directions: horizontal, vertical, diagonal down-right, and diagonal down-left. A maximal run of five or more wins unless BOTH of its ends are occupied by the opponent; a board edge is not an opponent stone. Priority: (1) make a winning move now; (2) prevent ${humanMark}'s winning move now; (3) create or stop forcing open-four threats; (4) create or stop open-three threats; (5) otherwise build connected lines with useful open ends and favor the center. Do not invent stones, coordinates, or moves outside criteria.`;
+    ? `Return one key from criteria. The board is empty, but the API permits at most 255 choices while the board has 256 cells; only H8, H9, I8, and I9 are offered for this opening move.`
+    : 'Return exactly one coordinate key from criteria. It must be a legal empty cell at request time.';
   return { model:'jev-latest', state:compactState({ decision:'Select one move from the full current set of legal empty cells. The browser validates the returned coordinate before playing it.', selection_tier:selection.tier, legal_move_count:selection.cells.length }), questions:{ next_move:{ type:'choice', instructions, criteria } } };
 }
 async function callJev(title, request) {
