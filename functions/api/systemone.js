@@ -55,33 +55,32 @@ function validateTicTacToeRequest(body) {
 function validateGomokuRequest(body) {
   const baseError = validateBase(body);
   if (baseError) return baseError;
-  const rows = body.state.board?.rows;
-  if (!Array.isArray(rows) || rows.length !== 16 || !rows.every((row) => Array.isArray(row) && row.length === 16 && row.every((cell) => ["", "X", "O"].includes(cell)))) {
-    return "Gomoku board.rows must be a 16 by 16 board containing only X, O, or empty strings.";
+  const board = body.state.board;
+  const stones = board?.stones;
+  if (!isObject(board) || board.size !== 16 || !Array.isArray(stones) || stones.length > 256) {
+    return "Gomoku state requires board.size 16 and a sparse stones array.";
+  }
+  const occupied = new Set();
+  for (const stone of stones) {
+    if (!isObject(stone) || !GOMOKU_CELL.test(stone.cell) || !["X", "O"].includes(stone.mark) || occupied.has(stone.cell)) {
+      return "Every Gomoku stone must have a unique valid cell and X/O mark.";
+    }
+    occupied.add(stone.cell);
   }
 
-  const questions = body.questions;
-  if (!isObject(questions)) return "A Gomoku choice question is required.";
-  if (isObject(questions.next_region)) {
-    const question = questions.next_region;
-    const regions = Object.keys(question.criteria || {});
-    if (!validateChoice(question) || regions.length < 1 || regions.length > 16 || !regions.every((region) => GOMOKU_REGION.test(region))) return "next_region must contain valid non-empty 4 by 4 regions.";
-    return null;
+  const question = body.questions?.next_move;
+  if (!validateChoice(question)) return "Gomoku requires a next_move choice question.";
+  const cells = Object.keys(question.criteria);
+  if (cells.length < 1 || cells.length > 255 || !cells.every((cell) => GOMOKU_CELL.test(cell))) {
+    return "next_move must contain one to 255 valid Gomoku cells.";
   }
-  if (isObject(questions.next_move)) {
-    const question = questions.next_move;
-    const cells = Object.keys(question.criteria || {});
-    if (!validateChoice(question) || cells.length < 1 || cells.length > 16 || !cells.every((cell) => GOMOKU_CELL.test(cell))) return "next_move must contain one to sixteen valid Gomoku cells.";
-    const boardByCell = Object.fromEntries(rows.flatMap((row, rowIndex) => row.map((value, columnIndex) => [`${String.fromCharCode(65 + rowIndex)}${columnIndex + 1}`, value])));
-    return cells.every((cell) => boardByCell[cell] === "") ? null : "Gomoku criteria may contain only empty board cells.";
-  }
-  return "Gomoku requires next_region or next_move.";
+  return cells.every((cell) => !occupied.has(cell)) ? null : "Gomoku criteria may contain only empty board cells.";
 }
 
 function validateGameRequest(body) {
-  const size = body?.state?.board?.rows?.length;
-  if (size === 3) return validateTicTacToeRequest(body);
-  if (size === 16) return validateGomokuRequest(body);
+  const board = body?.state?.board;
+  if (board?.rows?.length === 3) return validateTicTacToeRequest(body);
+  if (board?.size === 16) return validateGomokuRequest(body);
   return "Only the 3 by 3 and 16 by 16 game request formats are allowed.";
 }
 
